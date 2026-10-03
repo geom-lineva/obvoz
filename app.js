@@ -1,11 +1,12 @@
-import { prepareEvent, planRoute, findLaterDeparture, isActive } from './routing.js';
+import { prepareEvent, isActive } from './routing.js';
+import { buildNetwork, route as routeOnNet, laterDeparture } from './graph.js';
 
 const PHOTON = 'https://photon.komoot.io';
 const CROSSING_WAIT_MIN = 20; // organizator: »ne več kot 20 minut« na prehod
 const $ = (id) => document.getElementById(id);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-const state = { ev: null, from: null, to: null, mode: 'auto', run: 0, abort: null };
+const state = { ev: null, net: null, from: null, to: null, mode: 'auto', run: 0 };
 
 // ---------- karta ----------
 
@@ -148,94 +149,78 @@ async function setPlace(k, coords, label) {
 
 // ---------- usmerjanje ----------
 
-async function route() {
-  if (!state.from || !state.to) return;
+function route() {
+  if (!state.from || !state.to || !state.net) return;
   const run = ++state.run;
-  state.abort?.abort(); state.abort = new AbortController();
-  const opts = {
-    from: state.from, to: state.to, departMs: departMs(), costing: state.mode,
-    avoidCrossings: $('avoidCrossings').checked, signal: state.abort.signal,
-    onProgress: (it) => { if (run === state.run) $('result').innerHTML = `<div class="card"><span class="spinner"></span>${it ? `Iščem obvoz … (${it}. poskus)` : 'Računam pot …'}</div>`; },
-  };
-  let r;
-  try {
-    r = await planRoute(state.ev, opts);
-    // Brez prehodov ne gre → pokaži pot čez prehod (in to povej).
-    if (opts.avoidCrossings && r.status !== 'ok') {
-      const viaCrossing = await planRoute(state.ev, { ...opts, avoidCrossings: false,
-        onProgress: () => { if (run === state.run) $('result').innerHTML = '<div class="card"><span class="spinner"></span>Brez prehoda ne gre – računam pot čez prehod …</div>'; } });
-      if (viaCrossing.status === 'ok') r = { ...viaCrossing, crossingFallback: true };
-    }
-  }
-  catch (e) {
-    if (e.name === 'AbortError' || run !== state.run) return;
-    $('result').innerHTML = `<div class="card"><div class="note">Poti ni bilo mogoče izračunati: ${e.message}</div></div>`;
-    return;
-  }
-  if (run !== state.run) return;
-  render(r);
-  if (r.status !== 'ok') {
-    const later = await findLaterDeparture(state.ev, { ...opts, avoidCrossings: false }, r).catch(() => null);
+  const opts = { from: state.from, to: state.to, departMs: departMs(), costing: state.mode, avoidCrossings: $('avoidCrossings').checked };
+  $('result').innerHTML = '<div class="card"><span class="spinner"></span>Računam pot …</div>';
+  // izračun je sinhron (~50 ms); setTimeout pusti brskalniku, da izriše »računam«
+  setTimeout(() => {
     if (run !== state.run) return;
-    const box = $('laterBox');
-    if (!box) return;
-    if (later) {
-      box.innerHTML = `Brez prečkanja zapor lahko greš ob <b>${fmtTime(later.departMs)}</b> (${fmtDur(later.result.route.timeS)}). <button id="useLater">Uporabi ta čas</button>`;
-      $('useLater').onclick = () => { $('time').value = fmtTime(later.departMs); drawClosures(); route(); };
-    } else box.textContent = 'Kasnejšega odhoda brez zapor na tej poti nisem našel.';
-  }
+    const baseline = routeOnNet(state.net, state.ev, { ...opts, closures: false });
+    let r = routeOnNet(state.net, state.ev, opts), crossingFallback = false;
+    if (!r && opts.avoidCrossings) {
+      r = routeOnNet(state.net, state.ev, { ...opts, avoidCrossings: false });
+      crossingFallback = !!r;
+    }
+    const later = r ? null : laterDeparture(state.net, state.ev, { ...opts, avoidCrossings: false });
+    render({ route: r, baseline, crossingFallback, later });
+  }, 10);
 }
 
-function render(r) {
+const fmtKm = (km) => `${km.toFixed(1).replace('.', ',')} km`;
+
+function render({ route: r, baseline, crossingFallback, later }) {
   layers.route.clearLayers(); layers.baseline.clearLayers(); layers.conflicts.clearLayers();
   const ll = (c) => c.map(([x, y]) => [y, x]);
-  const changed = Math.abs(r.route.timeS - r.baseline.timeS) > 30 || Math.abs(r.route.lengthKm - r.baseline.lengthKm) > .1;
-  if (changed) L.polyline(ll(r.baseline.coords), { color: css('--muted'), weight: 4, opacity: .6, dashArray: '2 8' })
+
+  if (!r) {
+    if (baseline) L.polyline(ll(baseline.coords), { color: css('--muted'), weight: 4, opacity: .6, dashArray: '2 8' }).addTo(layers.baseline);
+    $('result').innerHTML = `<div class="card">
+      <span class="badge warn">Ob tej uri poti ni</span>
+      <div class="note">Izhodišče ali cilj je ob ${$('time').value} obkrožen z zaporami (ali stoji na zaprti cesti) in tam ni varovanega prehoda.
+      ${later ? `<div style="margin-top:6px">Prva možnost: odhod ob <b>${fmtTime(later.departMs)}</b> (${fmtDur(later.route.timeS)}, ${fmtKm(later.route.lengthKm)}). <button id="useLater">Uporabi ta čas</button></div>`
+        : '<div style="margin-top:6px">Tudi v naslednjih 8 urah poti nisem našel.</div>'}</div></div>`;
+    if ($('useLater')) $('useLater').onclick = () => { $('time').value = fmtTime(later.departMs); drawClosures(); route(); };
+    return;
+  }
+
+  const changed = baseline && (Math.abs(r.timeS - baseline.timeS) > 30 || Math.abs(r.lengthKm - baseline.lengthKm) > .1);
+  if (changed) L.polyline(ll(baseline.coords), { color: css('--muted'), weight: 4, opacity: .6, dashArray: '2 8' })
     .bindTooltip('Običajna pot (brez zapor)').addTo(layers.baseline);
-  L.polyline(ll(r.route.coords), { color: '#fff', weight: 9, opacity: .9 }).addTo(layers.route);
-  const line = L.polyline(ll(r.route.coords), { color: css('--accent'), weight: 5 }).addTo(layers.route);
-  for (const c of r.conflicts) {
-    L.marker([c.coords[1], c.coords[0]], { icon: L.divIcon({ className: '', iconSize: [24, 24], iconAnchor: [12, 12],
-      html: `<div style="width:24px;height:24px;border-radius:50%;background:${css('--closed')};color:#fff;font-weight:800;display:grid;place-items:center;border:2px solid #fff">!</div>` }) })
-      .bindTooltip(`Pot tu prečka zaporo: ${c.closure.name} (${hhmm(c.closure.start)}–${hhmm(c.closure.end)})`).addTo(layers.conflicts);
+  L.polyline(ll(r.coords), { color: '#fff', weight: 9, opacity: .9 }).addTo(layers.route);
+  const line = L.polyline(ll(r.coords), { color: css('--accent'), weight: 5 }).addTo(layers.route);
+  for (const c of r.usedCrossings) {
+    L.circleMarker([c.coords[1], c.coords[0]], { radius: 12, color: css('--warn'), weight: 3, fill: false })
+      .bindTooltip(`Prehod: ${c.name}`).addTo(layers.conflicts);
   }
   map.fitBounds(line.getBounds(), { padding: [40, 40], maxZoom: 16 });
 
-  const diff = Math.round((r.route.timeS - r.baseline.timeS) / 60);
-  const arrive = departMs() + r.route.timeS * 1000;
+  const diff = baseline ? Math.round((r.timeS - baseline.timeS) / 60) : 0;
+  const arrive = departMs() + r.timeS * 1000;
   const waitMin = r.usedCrossings.length * CROSSING_WAIT_MIN;
-  const km = `${r.route.lengthKm.toFixed(1).replace('.', ',')} km`;
   let html = `<div class="card">`;
   html += waitMin
-    ? `<div class="big">${Math.round(r.route.timeS / 60)}–${fmtDur(r.route.timeS + waitMin * 60)} <small>· ${km} · prihod ${fmtTime(arrive)}–${fmtTime(arrive + waitMin * 60000)}</small></div>`
-    : `<div class="big">${fmtDur(r.route.timeS)} <small>· ${km} · prihod ${fmtTime(arrive)}</small></div>`;
+    ? `<div class="big">${Math.round(r.timeS / 60)}–${fmtDur(r.timeS + waitMin * 60)} <small>· ${fmtKm(r.lengthKm)} · prihod ${fmtTime(arrive)}–${fmtTime(arrive + waitMin * 60000)}</small></div>`
+    : `<div class="big">${fmtDur(r.timeS)} <small>· ${fmtKm(r.lengthKm)} · prihod ${fmtTime(arrive)}</small></div>`;
   html += changed
-    ? `<div class="cmp">Brez zapor: ${fmtDur(r.baseline.timeS)}, ${r.baseline.lengthKm.toFixed(1).replace('.', ',')} km${diff > 0 ? ` (zapore dodajo ~${diff} min)` : ''}</div>`
+    ? `<div class="cmp">Brez zapor: ${fmtDur(baseline.timeS)}, ${fmtKm(baseline.lengthKm)}${diff > 0 ? ` (zapore dodajo ~${diff} min)` : ''}</div>`
     : `<div class="cmp">Zapore te poti ne podaljšajo.</div>`;
+  html += r.usedCrossings.length
+    ? `<span class="badge ok">✓ Ne vozi po zaprtih cestah</span>`
+    : `<span class="badge ok">✓ Pot se izogne vsem zaporam${$('avoidCrossings').checked ? ' in prehodom' : ''}</span>`;
 
-  if (r.status === 'ok') {
-    html += r.usedCrossings.length
-      ? `<span class="badge ok">✓ Ne vozi po zaprtih cestah</span>`
-      : `<span class="badge ok">✓ Pot se izogne vsem zaporam${$('avoidCrossings').checked ? ' in prehodom' : ''}</span>`;
-  } else {
-    html += `<span class="badge warn">Pot ne gre brez prečkanja zapore</span>
-      <div class="note">${r.status === 'no-route'
-        ? 'Iz izhodišča ali do cilja ob tem času ni poti mimo zapor (morda si znotraj zaprte zanke).'
-        : 'Obvoza nisem našel v okviru omejitev javnega usmerjevalnika.'}
-        Prikazana pot prečka zaporo na označenih mestih (!).
-        <div id="laterBox" style="margin-top:6px"><span class="spinner"></span>Iščem kasnejši odhod …</div></div>`;
-  }
   if (r.usedCrossings.length) {
     const names = r.usedCrossings.map((c) => `<b>${c.name.replace(/^[^:]+:\s*/, '')}</b>`).join(' in ');
-    html += `<div class="note">${r.crossingFallback ? 'Brez prečkanja trase do cilja ob tem času ni poti. ' : ''}
+    html += `<div class="note">${crossingFallback ? 'Brez prečkanja trase do cilja ob tem času ni poti. ' : ''}
       Pot gre čez traso na varovanem ${r.usedCrossings.length > 1 ? 'prehodih' : 'prehodu'} (${names}).
       Redarji spuščajo promet čez med skupinami tekačev – lahko čakaš do ${CROSSING_WAIT_MIN} min${r.usedCrossings.length > 1 ? ' na vsakem' : ''}.
       <ul class="list">${r.usedCrossings.map((c) => `<li>${c.name} – varovan ${hhmm(c.start)}–${hhmm(c.end)}</li>`).join('')}</ul>
-      ${r.crossingFallback ? '' : '<div style="margin-top:6px"><button id="tryAvoid">Poišči pot brez prehoda</button></div>'}</div>`;
+      ${crossingFallback ? '' : '<div style="margin-top:6px"><button id="tryAvoid">Poišči pot brez prehoda</button></div>'}</div>`;
   }
-  if (r.atEndpoint) html += `<div class="note">Izhodišče ali cilj je tik ob zaprti cesti – zadnjih nekaj metrov morda ne bo prevoznih.</div>`;
-  html += `<details><summary>Navodila (${r.route.maneuvers.length})</summary><ol class="steps">${
-    r.route.maneuvers.map((m) => `<li>${m.instruction}${m.length > 0 ? ` <span style="color:var(--muted)">· ${m.length < 1 ? Math.round(m.length * 1000) + ' m' : m.length.toFixed(1).replace('.', ',') + ' km'}</span>` : ''}</li>`).join('')
+  if (r.snapGapM > 80) html += `<div class="note">Izhodišče ali cilj je ${Math.round(r.snapGapM)} m od najbližje ceste, primerne za izbrani prevoz – zadnji del poti ni v izračunu.</div>`;
+  html += `<details><summary>Navodila (${r.maneuvers.length})</summary><ol class="steps">${
+    r.maneuvers.map((m) => `<li>${m.instruction}${m.length > 0 ? ` <span style="color:var(--muted)">· ${m.length < 1 ? Math.round(m.length * 1000) + ' m' : m.length.toFixed(1).replace('.', ',') + ' km'}</span>` : ''}</li>`).join('')
   }</ol></details>`;
   html += `</div>`;
   $('result').innerHTML = html;
@@ -245,7 +230,12 @@ function render(r) {
 // ---------- dogodki ----------
 
 async function loadEvent(id) {
-  const gj = await (await fetch(`events/${id}.geojson`)).json();
+  state.net = null;
+  $('result').innerHTML = '<div class="card"><span class="spinner"></span>Nalagam cestno omrežje …</div>';
+  const [gj, raw] = await Promise.all([
+    fetch(`events/${id}.geojson`).then((r) => r.json()),
+    fetch(`events/${id}.graph.json`).then((r) => r.json()),
+  ]);
   state.ev = prepareEvent(gj);
   const m = state.ev.meta;
   $('day').innerHTML = m.days.map((d) => `<option value="${d}">${fmtDay(d)}</option>`).join('');
@@ -254,6 +244,8 @@ async function loadEvent(id) {
   $('source').href = m.source?.startsWith('http') ? m.source : '#';
   map.setView([m.center[1], m.center[0]], m.zoom || 13);
   drawClosures();
+  state.net = buildNetwork(raw, state.ev);
+  $('result').innerHTML = '';
   route();
 }
 

@@ -8,13 +8,15 @@ python3 -m http.server 8140 --directory obvoz
 
 ## Kako deluje
 
-- **Usmerjanje:** javni Valhalla (`valhalla1.openstreetmap.de`, FOSSGIS, brezplačno, fair-use).
-- **Zapore:** pot se izračuna, nato se preveri, kje seka ali vozi po zapori, ki je aktivna
-  med odhodom in prihodom. Tam se dodajo `exclude_locations` (oz. majhni `exclude_polygons`)
-  in pot se izračuna znova (`routing.js`). To je potrebno, ker javni strežnik dovoli le
-  50 točk / 10 km obsega / 100 oglišč, zapor pa je lahko 50+ km.
-- **Prehodi** (`kind: crossing`) so med zaporo prehodni (z opozorilom o čakanju).
-- Če poti ni (npr. start znotraj zaprte zanke), predlaga prvi kasnejši odhod, ko se zapora odpre.
+- **Usmerjanje teče v brskalniku** po cestnem omrežju OpenStreetMap (`events/<id>.graph.json`,
+  zgradi ga `scripts/build_graph.py`). Brez zunanjega usmerjevalnika, brez omejitev, ~50 ms na pot.
+- **Zapore so časovne:** odsek je neprevozen le, če je zaprt ob uri, ko bi do njega prišli
+  (časovno odvisen A*, `graph.js`). Odsek šteje za zaprt, če seka zaporo ali je od nje < 12 m.
+- **Prehodi** (`kind: crossing`) so med zaporo prevozni s pribitkom 5 min za čakanje
+  (prikaz: +20 min zgornja meja). Z »Izogni se prehodom« se jim pot izogne, če gre.
+- Če poti ni (start/cilj v zaprti zanki ali na zaprti cesti), predlaga prvi kasnejši odhod.
+- Omejitve: zavijalne prepovedi (turn restrictions) niso upoštevane; časi vožnje so ocena
+  (omejitev hitrosti × 0,8), brez prometa.
 - **Iskanje naslovov:** Photon (komoot). **Karta:** OpenStreetMap.
 
 ## Format dogodka (`events/<id>.geojson`)
@@ -45,8 +47,9 @@ python3 -m http.server 8140 --directory obvoz
 | GPX trase + start + hitrosti (kolesarske dirke, teki brez časovnice) | `python3 scripts/gpx_rolling_closure.py trasa.gpx --id ... --name ... --start 2026-10-04T12:00 --fast 48 --slow 38` |
 | Ročno risanje | geojson.io → izvozi LineString-e, dodaj `kind/start/end` |
 
+Po vsakem novem dogodku zgradi še cestno omrežje: `python3 scripts/build_graph.py <id>`.
+
 ## Za produkcijo
 
-Pri večjem prometu javni Valhalla ni primeren (fair-use). Lasten Valhalla v Dockerju
-(OSM izvleček Slovenije z Geofabrika) – v `valhalla.json` dvigni `service_limits`
-za `exclude_polygons` in v `routing.js` spremeni `VALHALLA_URL` ter omejitve.
+Graf za Ljubljano je ~5,7 MB (~2 MB stisnjeno). Za večja območja (npr. kolesarska dirka čez
+pol Slovenije) ga zmanjšaj: odstrani pešpoti, poenostavi geometrijo ali razdeli na ploščice.
