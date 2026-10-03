@@ -121,12 +121,12 @@ def main():
     if a.simplify_m:
         refs = {}
         for way in ways:
-            for n in way[0]:
-                refs[n] = refs.get(n, 0) + 1
+            for nid in way[0]:
+                refs[nid] = refs.get(nid, 0) + 1
         for way in ways:
-            way[0] = simplify(way[0], coords, lambda n: refs[n] > 1, a.simplify_m)
+            way[0] = simplify(way[0], coords, lambda nid: refs[nid] > 1, a.simplify_m)
     for way in ways:
-        way[0] = [used.setdefault(n, len(used)) for n in way[0]]
+        way[0] = [used.setdefault(nid, len(used)) for nid in way[0]]
 
     # koordinate v mikrostopinjah, relativno na jugozahodni vogal (krajši zapis)
     ox, oy = round(w * 1e6), round(s * 1e6)
