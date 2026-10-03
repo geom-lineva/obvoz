@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obvoz</title>
+<meta name="description" content="Načrtovalec poti mimo zapor cest med dogodki.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #5d6470; --line: #e3e6eb;
+    --accent: #1f6feb; --accent-ink: #ffffff; --closed: #d92d20; --closed-off: #9aa1ab;
+    --ok: #12805c; --warn: #b54708; --warn-bg: #fff4e5; --ok-bg: #e8f6ef; --crossing: #12805c;
+    --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a21; --text: #e8eaee; --muted: #9aa1ab; --line: #2a2f39;
+      --accent: #4c8dff; --closed: #ff6b5e; --closed-off: #5d6470; --ok: #3ccf91; --warn: #ffb35c;
+      --warn-bg: #2b2112; --ok-bg: #11271d; --crossing: #3ccf91;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --text: #e8eaee; --muted: #9aa1ab; --line: #2a2f39;
+    --accent: #4c8dff; --closed: #ff6b5e; --closed-off: #5d6470; --ok: #3ccf91; --warn: #ffb35c;
+    --warn-bg: #2b2112; --ok-bg: #11271d; --crossing: #3ccf91;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
+  .panel { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 18px 18px 28px; }
+  #map { height: 100%; }
+  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 5px; text-transform: uppercase; letter-spacing: .04em; }
+  select, input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
+  select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .modes button { font: inherit; padding: 8px 0; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+  .modes button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  label.check { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--text); margin-top: 12px; cursor: pointer; }
+  label.check input { width: auto; margin: 3px 0 0; accent-color: var(--accent); }
+  label.check small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .place { position: relative; }
+  .place .dot { position: absolute; left: 11px; top: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translateY(-50%); }
+  .place input { padding-left: 30px; padding-right: 36px; }
+  .place .act { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px 6px; }
+  .sugg { position: absolute; z-index: 1000; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow-y: auto; }
+  .sugg li { padding: 7px 9px; border-radius: 6px; cursor: pointer; }
+  .sugg li small { color: var(--muted); display: block; }
+  .sugg li:hover, .sugg li.on { background: var(--bg); }
+  .swap { display: flex; justify-content: flex-end; margin: 4px 0 -4px; }
+  .swap button { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  .card { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .big small { font-size: 15px; font-weight: 500; color: var(--muted); }
+  .cmp { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .badge { display: inline-block; border-radius: 99px; padding: 3px 10px; font-size: 13px; font-weight: 600; margin-top: 10px; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .note { background: var(--warn-bg); color: var(--text); border-radius: 9px; padding: 9px 11px; font-size: 13px; margin-top: 10px; }
+  .note.ok { background: var(--ok-bg); }
+  .note button { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+  ul.list { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+  details { margin-top: 12px; font-size: 13px; }
+  summary { cursor: pointer; color: var(--accent); }
+  ol.steps { padding-left: 20px; margin: 8px 0 0; }
+  ol.steps li { margin: 4px 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 18px; }
+  .legend i { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+  .foot { font-size: 12px; color: var(--muted); margin-top: 16px; }
+  .foot a { color: var(--muted); }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .count { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .leaflet-container { background: var(--bg); font: inherit; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .leaflet-tile-pane { filter: brightness(.75) contrast(1.1) saturate(.6); } }
+  :root[data-theme="dark"] .leaflet-tile-pane { filter: brightness(.75) contrast(1.1) saturate(.6); }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+    #map { order: -1; }
+    .panel { border-right: 0; border-top: 1px solid var(--line); padding: 14px 16px 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <h1>Obvoz</h1>
+    <p class="sub">Načrtovalec poti mimo zapor cest med dogodki</p>
+
+    <label for="event">Dogodek</label>
+    <select id="event"></select>
+
+    <div class="row">
+      <div><label for="day">Dan</label><select id="day"></select></div>
+      <div><label for="time">Ura odhoda</label><input id="time" type="time" step="300"></div>
+    </div>
+    <p class="count" id="activeCount"></p>
+
+    <label>Prevoz</label>
+    <div class="modes" id="modes">
+      <button data-mode="auto" aria-pressed="true">Avto</button>
+      <button data-mode="bicycle" aria-pressed="false">Kolo</button>
+      <button data-mode="pedestrian" aria-pressed="false">Peš</button>
+    </div>
+    <label class="check"><input type="checkbox" id="avoidCrossings"><span>Izogni se prehodom čez traso<small>Brez čakanja na redarje, pot je lahko daljša.</small></span></label>
+
+    <label for="from">Od</label>
+    <div class="place">
+      <span class="dot" style="background:#12805c"></span>
+      <input id="from" placeholder="Naslov ali klik na zemljevid" autocomplete="off">
+      <button class="act" id="locate" title="Moja lokacija" aria-label="Moja lokacija">◎</button>
+    </div>
+    <div class="swap"><button id="swap">⇅ Zamenjaj</button></div>
+    <label for="to">Do</label>
+    <div class="place">
+      <span class="dot" style="background:#d92d20"></span>
+      <input id="to" placeholder="Naslov ali klik na zemljevid" autocomplete="off">
+    </div>
+    <p class="hint">Točki lahko tudi premikaš po zemljevidu.</p>
+
+    <div id="result"></div>
+
+    <div class="legend">
+      <span><i style="background:var(--closed)"></i>Zaprto ob izbrani uri</span>
+      <span><i style="background:var(--closed-off)"></i>Zaprto ob drugem času</span>
+      <span><i style="background:var(--crossing);height:10px;width:10px;border-radius:50%"></i>Prehod</span>
+      <span><i style="background:var(--accent)"></i>Tvoja pot</span>
+    </div>
+    <p class="foot">Časi zapor so ocena organizatorja in se lahko podaljšajo ali skrajšajo – upoštevaj redarje in policijo. Vir: <a id="source" target="_blank" rel="noopener">organizator</a>. Usmerjanje: Valhalla (FOSSGIS), iskanje: Photon, karta © OpenStreetMap.</p>
+  </aside>
+  <div id="map"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
