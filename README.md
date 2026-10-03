@@ -14,7 +14,9 @@ python3 -m http.server 8140 --directory obvoz
   (časovno odvisen A*, `graph.js`). Odsek šteje za zaprt, če seka zaporo ali je od nje < 12 m.
 - **Prehodi** (`kind: crossing`) so med zaporo prevozni s pribitkom 5 min za čakanje
   (prikaz: +20 min zgornja meja). Z »Izogni se prehodom« se jim pot izogne, če gre.
-- Če poti ni (start/cilj v zaprti zanki ali na zaprti cesti), predlaga prvi kasnejši odhod.
+- **Čakanje:** če je hitreje počakati, da se zapora odpre (npr. drseča zapora ob prehodu kolesarjev,
+  ~30 min), kot iti naokoli, pot vključi čakanje (največ 3 h) in ga izpiše.
+- Če poti ni (start/cilj na dolgo zaprti cesti), pove, katera zapora je vzrok, in poskusi kasnejši odhod.
 - Omejitve: zavijalne prepovedi (turn restrictions) niso upoštevane; časi vožnje so ocena
   (omejitev hitrosti × 0,8), brez prometa.
 - **Iskanje naslovov:** Photon (komoot). **Karta:** OpenStreetMap.
@@ -44,10 +46,12 @@ python3 -m http.server 8140 --directory obvoz
 | Vir podatkov | Orodje |
 |---|---|
 | Ljubljanski maraton (zemljevid na njihovi strani) | `python3 scripts/import_ljm.py` |
+| EP v cestnem kolesarstvu 2026 (GPX + uradne časovnice prehoda) | `python3 scripts/import_ep2026.py` |
 | GPX trase + start + hitrosti (kolesarske dirke, teki brez časovnice) | `python3 scripts/gpx_rolling_closure.py trasa.gpx --id ... --name ... --start 2026-10-04T12:00 --fast 48 --slow 38` |
 | Ročno risanje | geojson.io → izvozi LineString-e, dodaj `kind/start/end` |
 
 Po vsakem novem dogodku zgradi še cestno omrežje: `python3 scripts/build_graph.py <id>`.
+Za velika območja (npr. EP): `python3 scripts/build_graph.py ep-kolesarstvo-2026 --car-only --simplify-m 4 --margin-km 3`.
 
 ## Za produkcijo
 

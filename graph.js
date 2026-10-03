@@ -12,6 +12,7 @@ const NODE_NEAR_CLOSURE_M = 12;     // vozlišče na zaprti cesti
 const SEG_NEAR_CLOSURE_M = 12;      // sredina odseka na zaprti cesti
 const CROSSING_RADIUS_M = 40;       // odseki tako blizu prehoda so izjema
 const CROSSING_PENALTY_S = 300;     // pričakovano čakanje na prehodu (za izbiro poti)
+const MAX_WAIT_S = 3 * 3600;        // najdlje toliko čakamo pred zaporo, da se odpre
 const SNAP_RADIUS_M = 250;
 const SNAP_CANDIDATES = 6;
 const GRID_M = 60;
@@ -162,13 +163,39 @@ export function buildNetwork(raw, ev) {
 
 // ---------- iskanje poti ----------
 
-function edgeAllowed(net, k, mode) {
-  const w = net.raw.ways[net.sWay[net.adjSeg[k]]];
+function dirAllowed(w, fwd, mode) {
   const [, modes, oneway, bikeContra] = w;
   if (!(modes & mode)) return false;
   if (mode === FOOT || !oneway) return true;
   if (mode === BIKE && bikeContra) return true;
-  return net.adjFwd[k] ? oneway === 1 : oneway === -1;
+  return fwd ? oneway === 1 : oneway === -1;
+}
+const edgeAllowed = (net, k, mode) => dirAllowed(net.raw.ways[net.sWay[net.adjSeg[k]]], net.adjFwd[k], mode);
+
+// »Jedro« omrežja za način: vozlišča, iz katerih se da priti do glavnega omrežja in nazaj.
+// Brez tega se točka lahko pripne v enosmerno slepo ulico (npr. staro mestno jedro).
+function core(net, mode) {
+  net.cores ??= {};
+  if (net.cores[mode]) return net.cores[mode];
+  let seed = -1, bestDeg = -1;
+  for (let i = 0; i < net.n; i++) {
+    const dgr = net.deg[i + 1] - net.deg[i];
+    if (dgr > bestDeg && edgeAllowed(net, net.deg[i], mode)) { bestDeg = dgr; seed = i; }
+  }
+  const bfs = (reverse) => {
+    const seen = new Uint8Array(net.n), st = [seed]; seen[seed] = 1;
+    while (st.length) {
+      const u = st.pop();
+      for (let k = net.deg[u]; k < net.deg[u + 1]; k++) {
+        const v = net.adjTo[k], w = net.raw.ways[net.sWay[net.adjSeg[k]]];
+        if (!seen[v] && dirAllowed(w, reverse ? !net.adjFwd[k] : net.adjFwd[k], mode)) { seen[v] = 1; st.push(v); }
+      }
+    }
+    return seen;
+  };
+  const f = bfs(false), b = bfs(true), c = new Uint8Array(net.n);
+  for (let i = 0; i < net.n; i++) c[i] = f[i] & b[i];
+  return (net.cores[mode] = c);
 }
 
 function edgeSeconds(net, s, mode) {
@@ -180,10 +207,20 @@ function edgeSeconds(net, s, mode) {
 function snap(net, px, py, mode) {
   // najbližje vozlišče na vsaki od najbližjih cest (ena sama izolirana
   // parkirna pot ne sme pobrati vseh kandidatov)
-  const r = SNAP_RADIUS_M, byWay = new Map();
+  // večji krog, če v bližini ni ceste (sredi parkirišča, letališča …)
+  const inCore = core(net, mode);
+  for (const r of [SNAP_RADIUS_M, 600, 1500]) {
+    const found = snapWithin(net, px, py, mode, r, inCore);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+function snapWithin(net, px, py, mode, r, inCore) {
+  const byWay = new Map();
   for (const i of net.nodeGrid.query(px - r, py - r, px + r, py + r)) {
     const d = Math.hypot(net.x[i] - px, net.y[i] - py);
-    if (d > r) continue;
+    if (d > r || !inCore[i]) continue;
     for (let k = net.deg[i]; k < net.deg[i + 1]; k++) {
       const wi = net.sWay[net.adjSeg[k]];
       if (!(net.raw.ways[wi][1] & mode)) continue;
@@ -211,6 +248,8 @@ export function route(net, ev, { from, to, departMs, costing, closures = true, a
   const best = new Float64Array(net.n).fill(Infinity);  // čas vožnje + pribitki
   const drive = new Float64Array(net.n);                 // čisti čas (za uro prihoda)
   const prevK = new Int32Array(net.n).fill(-1);
+  const waitS = new Float64Array(net.n);                 // čakanje pred povezavo prevK[v]
+  const waitWhy = new Int32Array(net.n).fill(-1);
   const done = new Uint8Array(net.n);
   const heap = new Heap();
   for (const [d, i] of sources) { const c = d / approachMs; if (c < best[i]) { best[i] = c; drive[i] = c; heap.push(c + h(i), i); } }
@@ -226,17 +265,31 @@ export function route(net, ev, { from, to, departMs, costing, closures = true, a
       const v = net.adjTo[k];
       if (done[v] || !edgeAllowed(net, k, mode)) continue;
       const s = net.adjSeg[k];
-      let extra = 0;
+      let extra = 0, wait = 0, why = -1;
       const blockers = blockMap?.get(s);
       if (blockers) {
         const t = departMs + drive[u] * 1000;
-        if (blockers.some((ci) => { const c = ev.closures[ci]; return c.startMs <= t && t < c.endMs; })) {
-          if (avoidCrossings || !net.segCrossing.has(s)) continue;
-          extra = CROSSING_PENALTY_S;
+        const activeAt = (tt) => blockers.filter((ci) => ev.closures[ci].startMs <= tt && tt < ev.closures[ci].endMs);
+        let act = activeAt(t);
+        if (act.length) {
+          if (!avoidCrossings && net.segCrossing.has(s)) extra = CROSSING_PENALTY_S;
+          else {
+            // počakaj, da se zapora odpre (drseče zapore pri kolesarjih trajajo ~30 min)
+            let t2 = t;
+            for (let i = 0; i < 5 && act.length; i++) {
+              why = act.reduce((a, b) => (ev.closures[b].endMs > ev.closures[a].endMs ? b : a));
+              t2 = ev.closures[why].endMs; act = activeAt(t2);
+            }
+            wait = (t2 - t) / 1000;
+            if (act.length || wait > MAX_WAIT_S) continue;
+          }
         }
       }
-      const dt = edgeSeconds(net, s, mode), nb = best[u] + dt + extra;
-      if (nb < best[v]) { best[v] = nb; drive[v] = drive[u] + dt; prevK[v] = k; heap.push(nb + h(v), v); }
+      const dt = edgeSeconds(net, s, mode), nb = best[u] + wait + dt + extra;
+      if (nb < best[v]) {
+        best[v] = nb; drive[v] = drive[u] + wait + dt; prevK[v] = k;
+        waitS[v] = wait; waitWhy[v] = why; heap.push(nb + h(v), v);
+      }
     }
   }
   if (goal < 0) return null;
@@ -258,12 +311,23 @@ export function route(net, ev, { from, to, departMs, costing, closures = true, a
       if (bl && net.segCrossing.has(s) && bl.some((ci) => ev.closures[ci].startMs <= t && t < ev.closures[ci].endMs)) used.add(net.segCrossing.get(s));
     }
   }
+  const waits = [];
+  for (const k of ks) {
+    const v = net.adjTo[k];
+    if (waitS[v] > 0) {
+      const at = findFrom(net, k), c = ev.closures[waitWhy[v]];
+      waits.push({ seconds: waitS[v], untilMs: c.endMs, closure: c, coords: [net.lon[at], net.lat[at]],
+                   street: net.raw.names[net.raw.ways[net.sWay[net.adjSeg[k]]][5]] || '' });
+    }
+  }
   const coords = [from, ...nodes.map((i) => [net.lon[i], net.lat[i]]), to];
   return {
     coords,
     timeS: drive[goal] + targetCost.get(goal),
     lengthKm: lengthM / 1000,
     usedCrossings: [...used].map((i) => ev.crossings[i]),
+    waits,
+    waitS: waits.reduce((a, w) => a + w.seconds, 0),
     maneuvers: maneuvers(net, ks, nodes),
     snapGapM: Math.max(sources.find(([, i]) => i === startNode)?.[0] ?? 0, targets.find(([, i]) => i === goal)?.[0] ?? 0),
   };
@@ -287,15 +351,15 @@ function maneuvers(net, ks, nodes) {
   while (i < ks.length) {
     const nm = name(ks[i]); let j = i, len = 0;
     while (j < ks.length && name(ks[j]) === nm) { len += net.segLen[net.adjSeg[ks[j]]]; j++; }
-    const street = nm || 'neimenovano cesto';
+    const street = nm || 'neimenovana cesta';
     let instr;
-    if (i === 0) instr = `Začnite na ${street}.`;
+    if (i === 0) instr = `Začnite: ${street}.`;
     else {
       let d = bearing(net, nodes[i], nodes[i + 1]) - bearing(net, nodes[i - 1], nodes[i]);
       d = ((d + 540) % 360) - 180;
       const turn = Math.abs(d) < 25 ? 'Nadaljujte naravnost' : Math.abs(d) < 60 ? (d > 0 ? 'Rahlo desno' : 'Rahlo levo')
         : Math.abs(d) < 150 ? (d > 0 ? 'Zavijte desno' : 'Zavijte levo') : 'Obrnite';
-      instr = `${turn} na ${street}.`;
+      instr = `${turn}: ${street}.`;
     }
     // zelo kratke neimenovane odseke (priključki) pripni k naslednjemu
     if (!nm && len < 40 && j < ks.length && out.length) { out[out.length - 1].length += len / 1000; i = j; continue; }

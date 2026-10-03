@@ -169,6 +169,20 @@ function route() {
 }
 
 const fmtKm = (km) => `${km.toFixed(1).replace('.', ',')} km`;
+const fmtWhen = (ms) => {
+  const d = new Date(ms), same = d.toDateString() === new Date(departMs()).toDateString();
+  return same ? fmtTime(ms) : `${d.toLocaleDateString('sl-SI', { day: 'numeric', month: 'numeric' })} ${fmtTime(ms)}`;
+};
+
+function closuresNear(p, t, r = 120) {
+  const [x, y] = state.ev.proj.fwd(p);
+  return state.ev.closures.filter((c) => c.startMs <= t && t < c.endMs && c.xy.some(([cx, cy], i) => {
+    if (!i) return false;
+    const [ax, ay] = c.xy[i - 1], dx = cx - ax, dy = cy - ay, l2 = dx * dx + dy * dy;
+    const u = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    return Math.hypot(x - ax - u * dx, y - ay - u * dy) < r;
+  }));
+}
 
 function render({ route: r, baseline, crossingFallback, later }) {
   layers.route.clearLayers(); layers.baseline.clearLayers(); layers.conflicts.clearLayers();
@@ -176,9 +190,13 @@ function render({ route: r, baseline, crossingFallback, later }) {
 
   if (!r) {
     if (baseline) L.polyline(ll(baseline.coords), { color: css('--muted'), weight: 4, opacity: .6, dashArray: '2 8' }).addTo(layers.baseline);
+    const t = departMs(), near = [state.from, state.to].flatMap((p) => closuresNear(p, t));
+    const why = near.length
+      ? `Izhodišče ali cilj je ob zaprti cesti: ${[...new Map(near.map((c) => [c.name, c])).values()].map((c) => `<b>${c.name}</b> (do ${fmtWhen(c.endMs)})`).join(', ')}.`
+      : `Izhodišče ali cilj je ob ${$('time').value} obkrožen z zaporami in tam ni prehoda.`;
     $('result').innerHTML = `<div class="card">
       <span class="badge warn">Ob tej uri poti ni</span>
-      <div class="note">Izhodišče ali cilj je ob ${$('time').value} obkrožen z zaporami (ali stoji na zaprti cesti) in tam ni varovanega prehoda.
+      <div class="note">${why}
       ${later ? `<div style="margin-top:6px">Prva možnost: odhod ob <b>${fmtTime(later.departMs)}</b> (${fmtDur(later.route.timeS)}, ${fmtKm(later.route.lengthKm)}). <button id="useLater">Uporabi ta čas</button></div>`
         : '<div style="margin-top:6px">Tudi v naslednjih 8 urah poti nisem našel.</div>'}</div></div>`;
     if ($('useLater')) $('useLater').onclick = () => { $('time').value = fmtTime(later.departMs); drawClosures(); route(); };
@@ -196,6 +214,11 @@ function render({ route: r, baseline, crossingFallback, later }) {
   }
   map.fitBounds(line.getBounds(), { padding: [40, 40], maxZoom: 16 });
 
+  for (const w of r.waits) {
+    L.marker([w.coords[1], w.coords[0]], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+      html: `<div style="width:26px;height:26px;border-radius:50%;background:${css('--warn')};color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center;border:2px solid #fff">⏱</div>` }) })
+      .bindTooltip(`Počakaj do ${fmtTime(w.untilMs)}: ${w.closure.name}`).addTo(layers.conflicts);
+  }
   const diff = baseline ? Math.round((r.timeS - baseline.timeS) / 60) : 0;
   const arrive = departMs() + r.timeS * 1000;
   const waitMin = r.usedCrossings.length * CROSSING_WAIT_MIN;
@@ -206,6 +229,11 @@ function render({ route: r, baseline, crossingFallback, later }) {
   html += changed
     ? `<div class="cmp">Brez zapor: ${fmtDur(baseline.timeS)}, ${fmtKm(baseline.lengthKm)}${diff > 0 ? ` (zapore dodajo ~${diff} min)` : ''}</div>`
     : `<div class="cmp">Zapore te poti ne podaljšajo.</div>`;
+  if (r.waits.length) {
+    html += `<div class="note">Hitreje je počakati, da se zapora odpre, kot iti naokoli${r.waits.length > 1 ? ' (večkrat)' : ''}:
+      <ul class="list">${r.waits.map((w) => `<li>Počakaj do <b>${fmtTime(w.untilMs)}</b> (~${Math.round(w.seconds / 60)} min)${w.street ? ` – ${w.street}` : ''}; zapora: ${w.closure.name}</li>`).join('')}</ul>
+      Čakanje je že vključeno v čas poti. Ura odprtja je ocena organizatorja.</div>`;
+  }
   html += r.usedCrossings.length
     ? `<span class="badge ok">✓ Ne vozi po zaprtih cestah</span>`
     : `<span class="badge ok">✓ Pot se izogne vsem zaporam${$('avoidCrossings').checked ? ' in prehodom' : ''}</span>`;
@@ -245,6 +273,10 @@ async function loadEvent(id) {
   map.setView([m.center[1], m.center[0]], m.zoom || 13);
   drawClosures();
   state.net = buildNetwork(raw, state.ev);
+  const modes = raw.modes || ['auto', 'bicycle', 'pedestrian'];
+  for (const b of $('modes').children) b.hidden = !modes.includes(b.dataset.mode);
+  if (!modes.includes(state.mode)) $('modes').querySelector('[data-mode="auto"]').click();
+  $('avoidCrossings').closest('label').hidden = !state.ev.crossings.length;
   $('result').innerHTML = '';
   route();
 }
@@ -254,7 +286,12 @@ async function init() {
   $('event').innerHTML = events.map((e) => `<option value="${e.id}">${e.name}</option>`).join('');
   const want = new URLSearchParams(location.search).get('event');
   if (want && events.some((e) => e.id === want)) $('event').value = want;
-  $('event').onchange = () => loadEvent($('event').value);
+  $('event').onchange = () => {
+    // drug dogodek je lahko v drugem kraju – začni s praznima točkama
+    for (const k of ['from', 'to']) { state[k] = null; $(k).value = ''; markers[k].remove(); }
+    layers.route.clearLayers(); layers.baseline.clearLayers(); layers.conflicts.clearLayers();
+    loadEvent($('event').value);
+  };
   $('day').onchange = $('time').onchange = () => { drawClosures(); route(); };
   $('avoidCrossings').onchange = () => route();
   $('modes').onclick = (e) => {

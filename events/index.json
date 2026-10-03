@@ -1,3 +1,10 @@
 [
- {"id": "ljubljanski-maraton-2026", "name": "NLB Ljubljanski maraton 2026"}
+ {
+  "id": "ljubljanski-maraton-2026",
+  "name": "NLB Ljubljanski maraton 2026"
+ },
+ {
+  "id": "ep-kolesarstvo-2026",
+  "name": "EP v cestnem kolesarstvu 2026"
+ }
 ]
