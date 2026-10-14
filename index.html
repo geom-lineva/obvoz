@@ -6,136 +6,226 @@
 <title>Obvoz</title>
 <meta name="description" content="Načrtovalec poti mimo zapor cest med dogodki.">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap">
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #5d6470; --line: #e3e6eb;
-    --accent: #1f6feb; --accent-ink: #ffffff; --closed: #d92d20; --closed-off: #9aa1ab;
-    --ok: #12805c; --warn: #b54708; --warn-bg: #fff4e5; --ok-bg: #e8f6ef; --crossing: #12805c;
-    --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 16px rgba(16,24,40,.06);
+    --ground: #e6e3db; --panel: #ffffff; --field: #f3f1eb; --text: #16181b; --muted: #5c6068; --line: #e2dfd6;
+    --ink: #16181b; --ink-text: #ffffff; --ink-muted: #c9ccd2; --ink-tile: rgba(255,255,255,.08);
+    --sign: #ffc400; --sign-bg: #fff3cf;
+    --accent: #1747d1; --closed: #d3261c; --closed-off: #a29f98; --ok: #0f7a4f; --ok-on-ink: #5fd39b;
+    --from: #0f7a4f; --to: #d3261c;
+    --shadow: 0 1px 2px rgba(22,24,27,.08), 0 12px 40px rgba(22,24,27,.16);
+    --shadow-sm: 0 2px 10px rgba(22,24,27,.14);
+    --tiles: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #0f1115; --panel: #171a21; --text: #e8eaee; --muted: #9aa1ab; --line: #2a2f39;
-      --accent: #4c8dff; --closed: #ff6b5e; --closed-off: #5d6470; --ok: #3ccf91; --warn: #ffb35c;
-      --warn-bg: #2b2112; --ok-bg: #11271d; --crossing: #3ccf91;
+      --ground: #1b1d21; --panel: #1f2227; --field: #2a2e35; --text: #eceef1; --muted: #a3a9b3; --line: #343841;
+      --ink: #eceef1; --ink-text: #16181b; --ink-muted: #4a4f58; --ink-tile: rgba(22,24,27,.08);
+      --sign-bg: #2f2a17; --accent: #6c95ff; --closed: #ff6b5e; --closed-off: #6f737b; --ok: #4cc58c; --ok-on-ink: #0f7a4f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.45); --shadow-sm: 0 2px 10px rgba(0,0,0,.4);
+      --tiles: brightness(.75) contrast(1.1) saturate(.8);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #0f1115; --panel: #171a21; --text: #e8eaee; --muted: #9aa1ab; --line: #2a2f39;
-    --accent: #4c8dff; --closed: #ff6b5e; --closed-off: #5d6470; --ok: #3ccf91; --warn: #ffb35c;
-    --warn-bg: #2b2112; --ok-bg: #11271d; --crossing: #3ccf91;
+    --ground: #1b1d21; --panel: #1f2227; --field: #2a2e35; --text: #eceef1; --muted: #a3a9b3; --line: #343841;
+    --ink: #eceef1; --ink-text: #16181b; --ink-muted: #4a4f58; --ink-tile: rgba(22,24,27,.08);
+    --sign-bg: #2f2a17; --accent: #6c95ff; --closed: #ff6b5e; --closed-off: #6f737b; --ok: #4cc58c; --ok-on-ink: #0f7a4f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.45); --shadow-sm: 0 2px 10px rgba(0,0,0,.4);
+    --tiles: brightness(.75) contrast(1.1) saturate(.8);
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
-  body { background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .app { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
-  .panel { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 18px 18px 28px; }
-  #map { height: 100%; }
-  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -.01em; }
-  .sub { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
-  label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 5px; text-transform: uppercase; letter-spacing: .04em; }
-  select, input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
-  select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .modes button { font: inherit; padding: 8px 0; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
-  .modes button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  label.check { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--text); margin-top: 12px; cursor: pointer; }
-  label.check input { width: auto; margin: 3px 0 0; accent-color: var(--accent); }
-  label.check small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
-  .place { position: relative; }
-  .place .dot { position: absolute; left: 11px; top: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translateY(-50%); }
-  .place input { padding-left: 30px; padding-right: 36px; }
-  .place .act { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px 6px; }
-  .sugg { position: absolute; z-index: 1000; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow-y: auto; }
-  .sugg li { padding: 7px 9px; border-radius: 6px; cursor: pointer; }
-  .sugg li small { color: var(--muted); display: block; }
-  .sugg li:hover, .sugg li.on { background: var(--bg); }
-  .swap { display: flex; justify-content: flex-end; margin: 4px 0 -4px; }
-  .swap button { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 13px; }
-  .hint { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
-  .card { margin-top: 16px; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
-  .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
-  .big small { font-size: 15px; font-weight: 500; color: var(--muted); }
-  .cmp { color: var(--muted); font-size: 13px; margin-top: 2px; }
-  .badge { display: inline-block; border-radius: 99px; padding: 3px 10px; font-size: 13px; font-weight: 600; margin-top: 10px; }
-  .badge.ok { background: var(--ok-bg); color: var(--ok); }
-  .badge.warn { background: var(--warn-bg); color: var(--warn); }
-  .note { background: var(--warn-bg); color: var(--text); border-radius: 9px; padding: 9px 11px; font-size: 13px; margin-top: 10px; }
-  .note.ok { background: var(--ok-bg); }
-  .note button { font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
-  ul.list { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
-  details { margin-top: 12px; font-size: 13px; }
-  summary { cursor: pointer; color: var(--accent); }
-  ol.steps { padding-left: 20px; margin: 8px 0 0; }
-  ol.steps li { margin: 4px 0; }
-  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 18px; }
-  .legend i { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
-  .foot { font-size: 12px; color: var(--muted); margin-top: 16px; }
-  .foot a { color: var(--muted); }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  body { background: var(--ground); color: var(--text); font: 500 15px/1.45 Barlow, system-ui, -apple-system, sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  .cond { font-family: "Barlow Condensed", Barlow, sans-serif; }
+
+  #map { position: fixed; inset: 0; background: var(--ground); }
+  .leaflet-tile-pane { filter: var(--tiles); }
+  .leaflet-container { font: inherit; }
+  .leaflet-control-zoom.leaflet-bar { border: 0; box-shadow: none; display: flex; flex-direction: column; gap: 8px; margin: 24px 24px 0 0; }
+  .leaflet-control-zoom.leaflet-bar a { width: 44px; height: 44px; line-height: 44px; border: 0; border-radius: 12px !important; background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); font: 600 22px Barlow, sans-serif; }
+  .leaflet-control-attribution { background: transparent !important; font-size: 11px; }
+
+  /* plavajoči panel */
+  .panel { position: fixed; z-index: 500; top: 24px; left: 24px; bottom: 24px; width: 404px; display: flex; flex-direction: column;
+    background: var(--panel); border-radius: 20px; box-shadow: var(--shadow); overflow: hidden; }
+  .head { display: flex; align-items: center; gap: 12px; padding: 20px 24px 14px; }
+  .logo { width: 40px; height: 40px; flex: none; display: grid; place-items: center; background: var(--sign); border: 2.5px solid #16181b; border-radius: 9px; transform: rotate(45deg); }
+  .logo svg { transform: rotate(-45deg); }
+  .head h1 { margin: 0; font: 700 28px/1 "Barlow Condensed", sans-serif; letter-spacing: .01em; text-transform: uppercase; }
+  .head p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+  .scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
+  .handle { display: none; }
+
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  label.lbl, .lbl { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  select, input[type="time"] { height: 48px; width: 100%; padding: 0 14px; background: var(--field); border: 0; border-radius: 12px; font-weight: 600; font-size: 16px; }
+  input[type="time"] { font: 600 19px "Barlow Condensed", sans-serif; letter-spacing: .02em; }
+  select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .count { display: flex; align-items: center; gap: 8px; margin: -6px 0 0; font-size: 13px; color: var(--muted); }
+  .count::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--closed); flex: none; }
+
+  .modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--field); border-radius: 14px; }
+  .modes button { height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 10px; background: transparent; font-weight: 600; cursor: pointer; }
+  .modes button[aria-pressed="true"] { background: var(--ink); color: var(--ink-text); }
+
+  .places { position: relative; background: var(--field); border-radius: 14px; }
+  .place { position: relative; display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 56px 0 16px; }
+  .place + .place { border-top: 1px solid var(--line); margin-left: 44px; padding-left: 0; }
+  .place + .place .dot { position: absolute; left: -28px; }
+  .dot { width: 12px; height: 12px; flex: none; border-radius: 50%; box-shadow: 0 0 0 3px var(--panel); }
+  .dot.to { border-radius: 3px; }
+  .places::after { content: ""; position: absolute; left: 21px; top: 35px; width: 2px; height: 38px; background: repeating-linear-gradient(var(--closed-off) 0 3px, transparent 3px 6px); pointer-events: none; }
+  .place input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; font-size: 16px; font-weight: 500; }
+  .place input::placeholder { color: var(--muted); }
+  .place input:focus-visible { outline: 0; }
+  .places:focus-within { box-shadow: 0 0 0 2px var(--accent); }
+  .icon-btn { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 12px; background: var(--panel); box-shadow: 0 1px 4px rgba(22,24,27,.12); cursor: pointer; }
+  #swap { position: absolute; z-index: 2; right: 6px; top: 32px; }
+  .place:first-child { padding-right: 104px; }
+  #locate { position: absolute; right: 54px; top: 5px; background: transparent; box-shadow: none; color: var(--muted); }
+  .hint { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
+
+  .sugg { position: absolute; z-index: 1000; left: 0; right: 0; top: calc(100% + 6px); background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); list-style: none; margin: 0; padding: 6px; max-height: 280px; overflow-y: auto; }
+  .place + .place .sugg { left: -44px; }
+  .sugg li { padding: 9px 11px; border-radius: 8px; cursor: pointer; }
+  .sugg li small { color: var(--muted); display: block; font-weight: 400; }
+  .sugg li:hover, .sugg li.on { background: var(--field); }
+
+  /* rezultat */
+  #result { display: flex; flex-direction: column; gap: 12px; }
+  #result:empty { display: none; }
+  .loading { display: flex; align-items: center; gap: 10px; padding: 16px; border-radius: 16px; background: var(--field); color: var(--muted); }
+  .spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .count { font-size: 13px; color: var(--muted); margin-top: 8px; }
-  .leaflet-container { background: var(--bg); font: inherit; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .leaflet-tile-pane { filter: brightness(.75) contrast(1.1) saturate(.6); } }
-  :root[data-theme="dark"] .leaflet-tile-pane { filter: brightness(.75) contrast(1.1) saturate(.6); }
+  .summary { display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: 16px; background: var(--ink); color: var(--ink-text); }
+  .summary .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .summary .dur { font: 700 48px/1 "Barlow Condensed", sans-serif; letter-spacing: -.01em; }
+  .summary .km { font-size: 15px; color: var(--ink-muted); }
+  .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--ink-tile); }
+  .tile span { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); }
+  .tile b { font: 600 24px/1.1 "Barlow Condensed", sans-serif; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-muted); }
+  .check svg { flex: none; stroke: var(--ok-on-ink); }
+  .alert { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--sign-bg); border: 2px solid var(--sign); }
+  .alert h2 { display: flex; align-items: center; gap: 10px; margin: 0; font: 700 24px/1.05 "Barlow Condensed", sans-serif; }
+  .alert h2 svg { flex: none; }
+  .alert p { margin: 0; font-size: 14px; }
+  .cta { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 8px 16px; border: 0; border-radius: 12px; background: var(--ink); color: var(--ink-text); text-align: left; cursor: pointer; }
+  .cta small { display: block; font-size: 12px; color: var(--ink-muted); }
+  .cta b { font: 700 22px/1.05 "Barlow Condensed", sans-serif; }
+  .cta svg { flex: none; }
+  .link { align-self: flex-start; min-height: 44px; padding: 0; border: 0; background: none; color: var(--accent); font-weight: 600; cursor: pointer; text-align: left; }
+  .info { display: flex; gap: 12px; padding: 14px 16px; border-radius: 14px; background: var(--field); font-size: 14px; }
+  .info .ic { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 2px dashed var(--closed-off); background: var(--panel); }
+  .info .ic.wait { border: 0; background: var(--sign); color: #16181b; display: grid; place-items: center; }
+  details { font-size: 15px; }
+  summary { min-height: 44px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; color: var(--accent); font-weight: 600; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translate(-3px, -3px); }
+  details[open] summary::after { transform: rotate(-135deg); }
+  ol.steps { margin: 4px 0 0; padding-left: 22px; font-size: 14px; }
+  ol.steps li { margin: 6px 0; }
+  ol.steps .d { color: var(--muted); }
+
+  .foot { margin: 4px 0 0; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .foot a { color: var(--muted); }
+
+  .legend { position: fixed; z-index: 500; right: 24px; bottom: 28px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 10px 16px; border-radius: 12px;
+    background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: var(--shadow-sm); font-size: 13px; color: var(--muted); }
+  .legend > span { display: flex; align-items: center; gap: 8px; }
+  .legend i { width: 22px; height: 5px; border-radius: 3px; }
+  .legend i.off { height: 0; border-top: 3px dashed var(--closed-off); border-radius: 0; }
+
+  .wait-pin { width: 30px; height: 30px; border-radius: 50%; background: var(--sign); color: #16181b; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); display: grid; place-items: center; }
+
   @media (max-width: 760px) {
-    .app { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
-    #map { order: -1; }
-    .panel { border-right: 0; border-top: 1px solid var(--line); padding: 14px 16px 24px; }
+    .panel { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 62vh; border-radius: 22px 22px 0 0; }
+    .handle { display: block; align-self: center; width: 40px; height: 5px; margin-top: 10px; border-radius: 3px; background: var(--line); flex: none; }
+    .head { padding: 10px 16px 8px; }
+    .head p { display: none; }
+    .logo { width: 30px; height: 30px; border-width: 2px; }
+    .head h1 { font-size: 22px; }
+    .scroll { padding: 4px 16px 20px; gap: 14px; }
+    .legend { left: 12px; right: auto; top: 12px; bottom: auto; padding: 8px 12px; gap: 6px 12px; font-size: 12px; flex-wrap: nowrap; }
+    .legend i { width: 16px; }
+    .legend .long { display: none; }
+    .leaflet-control-zoom.leaflet-bar { margin: 12px 12px 0 0; }
   }
 </style>
 </head>
 <body>
-<div class="app">
-  <aside class="panel">
-    <h1>Obvoz</h1>
-    <p class="sub">Načrtovalec poti mimo zapor cest med dogodki</p>
+<div id="map" aria-label="Zemljevid"></div>
 
-    <label for="event">Dogodek</label>
-    <select id="event"></select>
+<aside class="panel">
+  <div class="handle" aria-hidden="true"></div>
+  <header class="head">
+    <div class="logo" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M6 20 V12 C6 8 9 6 13 6 H18 M15 3 L18 6 L15 9" fill="none" stroke="#16181b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div>
+      <h1>Obvoz</h1>
+      <p>Pot mimo zapor med dogodki</p>
+    </div>
+  </header>
+
+  <div class="scroll">
+    <div class="field">
+      <label class="lbl" for="event">Dogodek</label>
+      <select id="event"></select>
+    </div>
 
     <div class="row">
-      <div><label for="day">Dan</label><select id="day"></select></div>
-      <div><label for="time">Ura odhoda</label><input id="time" type="time" step="300"></div>
+      <div class="field"><label class="lbl" for="day">Dan</label><select id="day"></select></div>
+      <div class="field"><label class="lbl" for="time">Odhod</label><input id="time" type="time" step="300"></div>
     </div>
     <p class="count" id="activeCount"></p>
 
-    <label>Prevoz</label>
-    <div class="modes" id="modes">
-      <button data-mode="auto" aria-pressed="true">Avto</button>
-      <button data-mode="bicycle" aria-pressed="false">Kolo</button>
-      <button data-mode="pedestrian" aria-pressed="false">Peš</button>
+    <div class="modes" id="modes" role="group" aria-label="Prevoz">
+      <button data-mode="auto" aria-pressed="true">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16 V11 L7 6 H17 L19 11 V16 Z"/><path d="M5 11 H19"/><circle cx="8" cy="16" r="1.6"/><circle cx="16" cy="16" r="1.6"/></svg>Avto</button>
+      <button data-mode="bicycle" aria-pressed="false">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16 L10 9 H15 L18 16 M10 9 L12 16 H6 M13 6 H16"/></svg>Kolo</button>
+      <button data-mode="pedestrian" aria-pressed="false">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4.5" r="1.8"/><path d="M9 21 L11 14 L14 16 V21 M11 14 L12 9 L16 12 H19 M12 9 L8 11 L7 14"/></svg>Peš</button>
     </div>
-    <label class="check"><input type="checkbox" id="avoidCrossings"><span>Izogni se prehodom čez traso<small>Brez čakanja na redarje, pot je lahko daljša.</small></span></label>
 
-    <label for="from">Od</label>
-    <div class="place">
-      <span class="dot" style="background:#12805c"></span>
-      <input id="from" placeholder="Naslov ali klik na zemljevid" autocomplete="off">
-      <button class="act" id="locate" title="Moja lokacija" aria-label="Moja lokacija">◎</button>
-    </div>
-    <div class="swap"><button id="swap">⇅ Zamenjaj</button></div>
-    <label for="to">Do</label>
-    <div class="place">
-      <span class="dot" style="background:#d92d20"></span>
-      <input id="to" placeholder="Naslov ali klik na zemljevid" autocomplete="off">
+    <div class="places" id="places">
+      <div class="place">
+        <span class="dot" style="background:var(--from)"></span>
+        <input id="from" placeholder="Od – naslov ali klik na zemljevid" autocomplete="off" aria-label="Od">
+        <button class="icon-btn" id="locate" title="Moja lokacija" aria-label="Moja lokacija">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2 V5 M12 19 V22 M2 12 H5 M19 12 H22"/></svg>
+        </button>
+      </div>
+      <div class="place">
+        <span class="dot to" style="background:var(--to)"></span>
+        <input id="to" placeholder="Do – naslov ali klik na zemljevid" autocomplete="off" aria-label="Do">
+      </div>
+      <button class="icon-btn" id="swap" aria-label="Zamenjaj točki" title="Zamenjaj točki">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 V20 M4 8 L8 4 L12 8 M16 20 V4 M12 16 L16 20 L20 16"/></svg>
+      </button>
     </div>
     <p class="hint">Točki lahko tudi premikaš po zemljevidu.</p>
 
-    <div id="result"></div>
+    <div id="result" aria-live="polite"></div>
 
-    <div class="legend">
-      <span><i style="background:var(--closed)"></i>Zaprto ob izbrani uri</span>
-      <span><i style="background:var(--closed-off)"></i>Zaprto ob drugem času</span>
-      <span><i style="background:var(--crossing);height:10px;width:10px;border-radius:50%"></i>Prehod</span>
-      <span><i style="background:var(--accent)"></i>Tvoja pot</span>
-    </div>
     <p class="foot">Časi zapor so ocena organizatorja in se lahko podaljšajo ali skrajšajo – upoštevaj redarje in policijo. Vir: <a id="source" target="_blank" rel="noopener">organizator</a>. Poti računa brskalnik po cestnem omrežju © OpenStreetMap; iskanje naslovov: Photon.</p>
-  </aside>
-  <div id="map"></div>
+  </div>
+</aside>
+
+<div class="legend" aria-label="Legenda">
+  <span><i style="background:var(--closed)"></i>Zaprto<span class="long">&nbsp;ob izbrani uri</span></span>
+  <span><i class="off"></i>Ne ovira<span class="long">&nbsp;(odprto ob prihodu ali zaprto ob drugem času)</span></span>
+  <span><i style="background:var(--accent)"></i>Tvoja pot</span>
 </div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>

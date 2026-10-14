@@ -24,9 +24,10 @@ export function prepareEvent(geojson) {
     if (p.kind === 'closure') {
       const xy = f.geometry.coordinates.map(proj.fwd);
       closures.push({ ...base, coords: f.geometry.coordinates, xy, bbox: bboxOf(xy) });
-    } else if (p.kind === 'crossing') {
-      crossings.push({ ...base, coords: f.geometry.coordinates, xy: proj.fwd(f.geometry.coordinates) });
     }
+    // Prehodov (kind: crossing) namenoma ne upoštevamo: organizator sicer piše, da bodo
+    // redarji spuščali promet čez traso, a to v praksi ne drži. Zapora se sprosti le,
+    // ko se po časovnici odpre.
   }
   return { meta: geojson.event, proj, closures, crossings };
 }

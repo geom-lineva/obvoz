@@ -320,8 +320,20 @@ export function route(net, ev, { from, to, departMs, costing, closures = true, a
                    street: net.raw.names[net.raw.ways[net.sWay[net.adjSeg[k]]][5]] || '' });
     }
   }
+  // zapore, čez katere gre pot (ob prehodu so odprte), z uro prehoda
+  const crossed = new Map();
+  if (blockMap) {
+    for (const k of ks) {
+      const v = net.adjTo[k], t = departMs + drive[v] * 1000;
+      for (const ci of blockMap.get(net.adjSeg[k]) || []) {
+        const c = ev.closures[ci];
+        if (!crossed.has(ci)) crossed.set(ci, { closure: c, atMs: t, coords: [net.lon[v], net.lat[v]] });
+      }
+    }
+  }
   const coords = [from, ...nodes.map((i) => [net.lon[i], net.lat[i]]), to];
   return {
+    crossed: [...crossed.values()],
     coords,
     timeS: drive[goal] + targetCost.get(goal),
     lengthKm: lengthM / 1000,

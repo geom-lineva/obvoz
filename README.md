@@ -12,8 +12,9 @@ python3 -m http.server 8140 --directory obvoz
   zgradi ga `scripts/build_graph.py`). Brez zunanjega usmerjevalnika, brez omejitev, ~50 ms na pot.
 - **Zapore so časovne:** odsek je neprevozen le, če je zaprt ob uri, ko bi do njega prišli
   (časovno odvisen A*, `graph.js`). Odsek šteje za zaprt, če seka zaporo ali je od nje < 12 m.
-- **Prehodi** (`kind: crossing`) so med zaporo prevozni s pribitkom 5 min za čakanje
-  (prikaz: +20 min zgornja meja). Z »Izogni se prehodom« se jim pot izogne, če gre.
+- **Prehodi** (`kind: crossing`) se namenoma ne upoštevajo (`routing.js`): organizator sicer
+  napove varovane prehode čez traso, a v praksi avtov ne spuščajo čez. Zaprt odsek je zaprt,
+  dokler se po časovnici ne odpre.
 - **Čakanje:** če je hitreje počakati, da se zapora odpre (npr. drseča zapora ob prehodu kolesarjev,
   ~30 min), kot iti naokoli, pot vključi čakanje (največ 3 h) in ga izpiše.
 - Če poti ni (start/cilj na dolgo zaprti cesti), pove, katera zapora je vzrok, in poskusi kasnejši odhod.
